@@ -15,6 +15,9 @@
   "first_beneficiary",
   "person_name",
   "issuer_name",
+"mode_of_payment",
+"party_type",
+"party",
   "picture_of_check"
  ],
  "fields": [
@@ -27,6 +30,34 @@
    "label": "Cheque No",
    "reqd": 1
   },
+{
+  "columns": 1,
+  "fieldname": "mode_of_payment",
+  "fieldtype": "Link",
+  "options": "Mode of Payment",
+  "in_list_view": 1,
+  "label": "Mode of Payment",
+  "reqd": 1
+},
+{
+  "columns": 1,
+  "fieldname": "party_type",
+  "fieldtype": "Link",
+  "options": "Party Type",
+  "in_list_view": 1,
+  "label": "Party Type",
+  "reqd": 1
+},
+{
+  "columns": 1,
+  "fieldname": "party",
+  "fieldtype": "Dynamic Link",
+  "options": "party_type",
+  "in_list_view": 1,
+  "label": "Party",
+  "reqd": 1
+},
+
   {
    "columns": 1,
    "fieldname": "reference_date",
