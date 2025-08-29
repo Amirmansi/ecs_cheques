@@ -61,103 +61,155 @@ frappe.ui.form.on("Multiple Cheque Entry", {
     }
 });
 
+// -------- Helper: build robust Payment Entry data --------
+function buildPaymentEntryTemplate(frm, row, isPay, isReceive, accountPaidTo, accountCurrency) {
+    // Choose sensible paid_from / paid_to defaults and allow user overrides
+    const paid_to_value = accountPaidTo || frm.doc.paid_to || frm.doc.payable_account || frm.doc.account || frm.doc.bank_acc;
+    const paid_from_value = (isReceive ? (frm.doc.paid_from || frm.doc.account || frm.doc.bank_acc) : (frm.doc.payable_account || frm.doc.account || frm.doc.bank_acc));
+
+    // Base payload (common fields)
+    const base = {
+        doctype: "Payment Entry",
+        posting_date: frm.doc.posting_date || frm.doc.transaction_date || frm.doc.posting_date,
+        payment_type: frm.doc.payment_type,
+        mode_of_payment: frm.doc.mode_of_payment,
+        mode_of_payment_type: frm.doc.mode_of_payment_type,
+        party_type: frm.doc.party_type,
+        party: frm.doc.party,
+        // main account links commonly used by Payment Entry
+        paid_from: paid_from_value,
+        paid_to: paid_to_value,
+        cheque_bank: frm.doc.cheque_bank,
+        bank_acc: frm.doc.bank_acc,
+        paid_amount: row.paid_amount || row.amount || 0,
+        received_amount: row.paid_amount || row.amount || 0,
+        reference_no: row.reference_no,
+        reference_date: row.reference_date,
+        first_beneficiary: row.first_beneficiary || row.first_beneficiary,
+        person_name: row.person_name,
+        issuer_name: row.issuer_name,
+        picture_of_check: row.picture_of_check,
+        reference_doctype: "Multiple Cheque Entry",
+        reference_link: frm.doc.name
+    };
+
+    // Add a variety of alternate fieldnames for "Account Paid To" and its currency
+    // (many ERPNext versions/customizations use slightly different names).
+    // We fill as many plausible names as possible so validation can find a value.
+    const alternates = {
+        // account name variants
+        paid_to_account: base.paid_to,
+        account_paid_to: base.paid_to,
+        account_paid_to_name: base.paid_to,
+        paid_to_account_name: base.paid_to,
+
+        // currency name variants
+        paid_to_account_currency: accountCurrency || frm.doc.account_currency || frm.doc.currency || frm.doc.account_currency_to,
+        account_paid_to_currency: accountCurrency || frm.doc.account_currency || frm.doc.currency,
+        paid_to_currency: accountCurrency || frm.doc.account_currency || frm.doc.currency,
+        account_currency_to: accountCurrency || frm.doc.account_currency || frm.doc.currency
+    };
+
+    // merge base + alternates. alternates added last so they are present in payload.
+    return Object.assign({}, base, alternates, {
+        // child link: keep track of which cheque row this corresponds to
+        cheque_table_no: isReceive ? row.name : undefined,
+        cheque_table_no2: isPay ? row.name : undefined
+    });
+}
+
 // -------- On Submit for Payment Entries --------
 frappe.ui.form.on("Multiple Cheque Entry", "on_submit", function(frm) {
     const isPay = frm.doc.payment_type === "Pay";
     const isReceive = frm.doc.payment_type === "Receive";
     const table = isPay ? frm.doc.cheque_table_2 : frm.doc.cheque_table;
-    if (!table || !table.length) return;
+    if (!table || !table.length) {
+        frappe.msgprint({ title: __('No Cheques'), message: __('لا توجد شيكات لإنشاء قيد دفع/قبض.') });
+        return;
+    }
 
-    // Use custom Account Paid To if provided (fieldname: account_paid_to)
-    // Use custom Account Currency if provided (fieldname: account_currency)
-    const accountPaidTo = frm.doc.account_paid_to; // <-- your custom "Account Paid To" field
-    const accountCurrency = frm.doc.account_currency; // <-- your custom "Account Currency" field
+    // Your custom fields (labels -> expected fieldnames)
+    const accountPaidTo = frm.doc.account_paid_to || frm.doc.account_paid || frm.doc.account_paid_to_field || frm.doc.account_paid_to_name;
+    const accountCurrency = frm.doc.account_currency || frm.doc.currency || frm.doc.account_currency_field;
 
-    let docs = [];
-    table.forEach(row => {
-        if (!row.payment_entry) {
-            // Decide paid_from / paid_to using existing fields but override with custom ones when present
-            const paid_to_value = accountPaidTo || frm.doc.paid_to || frm.doc.payable_account || frm.doc.account;
-            // Optionally add logic for paid_from override if you created "account_paid_from":
-            // const accountPaidFrom = frm.doc.account_paid_from;
-            const paid_from_value = isReceive ? (frm.doc.paid_from || frm.doc.account) : (frm.doc.payable_account || frm.doc.account);
+    // Validate presence before trying many inserts
+    if (!accountPaidTo && !frm.doc.paid_to && !frm.doc.payable_account && !frm.doc.account && !frm.doc.bank_acc) {
+        frappe.msgprint({
+            title: __('Missing Account'),
+            message: __('لم يتم تحديد حساب "Account Paid To" أو أي حساب بديل (كالـ Paid To / Payable Account / Account). الرجاء تحديد الحساب.')
+        });
+        return;
+    }
 
-            const new_doc = {
-                doctype: "Payment Entry",
-                posting_date: frm.doc.posting_date,
-                reference_doctype: "Multiple Cheque Entry",
-                reference_link: frm.doc.name,
-                payment_type: frm.doc.payment_type,
-                mode_of_payment: frm.doc.mode_of_payment,
-                mode_of_payment_type: frm.doc.mode_of_payment_type,
-                party_type: frm.doc.party_type,
-                party: frm.doc.party,
-                // set paid_from / paid_to
-                paid_from: paid_from_value,
-                paid_to: paid_to_value,
-                // also keep bank / cheque details if present
-                cheque_bank: frm.doc.cheque_bank,
-                bank_acc: frm.doc.bank_acc,
-                cheque_type: row.cheque_type,
-                reference_no: row.reference_no,
-                reference_date: row.reference_date,
-                paid_amount: row.paid_amount,
-                received_amount: row.paid_amount,
-                first_beneficiary: row.first_beneficiary,
-                person_name: row.person_name,
-                issuer_name: row.issuer_name,
-                picture_of_check: row.picture_of_check,
-                cheque_table_no: isReceive ? row.name : undefined,
-                cheque_table_no2: isPay ? row.name : undefined
-            };
+    // Build all docs to insert
+    const docs = table.filter(r => !r.payment_entry).map(row => buildPaymentEntryTemplate(frm, row, isPay, isReceive, accountPaidTo, accountCurrency));
 
-            // If user supplied a single account currency, set account-currency fields for both sides.
-            // Field names used here are the typical ones used by Payment Entry in client scripts.
-            // If your ERPNext version uses slightly different fieldnames, adjust accordingly.
-            if (accountCurrency) {
-                new_doc.paid_to_account_currency = accountCurrency;
-                new_doc.paid_from_account_currency = accountCurrency;
-                // also set company_currency if you want, but usually not necessary:
-                // new_doc.company_currency = frm.doc.company_currency || accountCurrency;
-            }
+    // Insert & submit sequentially to better catch and report errors per document
+    let chain = Promise.resolve();
+    docs.forEach(docPayload => {
+        chain = chain.then(() => new Promise((resolve, reject) => {
+            frappe.call({
+                method: "frappe.client.insert",
+                args: { doc: docPayload },
+                callback: function(inserted) {
+                    if (!inserted || !inserted.message) {
+                        // collect server response for debugging if any
+                        const errMsg = (inserted && inserted.exc) ? inserted.exc : "Unknown insert error";
+                        console.error("Insert failed:", errMsg, inserted);
+                        frappe.msgprint({ title: __('Insert Error'), message: __('فشل إدخال قيد الدفع: ') + errMsg });
+                        return reject(errMsg);
+                    }
 
-            docs.push(new_doc);
-        }
-    });
-
-    // Insert & Submit Each Entry Properly
-    const funcs = docs.map(doc =>
-        frappe.call({
-            method: "frappe.client.insert",
-            args: { doc },
-            callback: function(inserted) {
-                if (inserted.message) {
+                    // now submit the inserted doc
                     frappe.call({
                         method: "frappe.client.submit",
                         args: { doc: inserted.message },
                         callback: function(submitted) {
-                            if (submitted.message) {
-                                const child_doctype = isPay ? "Cheque Table Pay" : "Cheque Table Receive";
-                                const child_name = doc.cheque_table_no || doc.cheque_table_no2;
-                                // ensure existence check
-                                if (child_name) {
-                                    frappe.db.set_value(child_doctype, child_name, "payment_entry", submitted.message.name);
-                                }
+                            if (!submitted || !submitted.message) {
+                                const err2 = (submitted && submitted.exc) ? submitted.exc : "Unknown submit error";
+                                console.error("Submit failed:", err2, submitted);
+                                frappe.msgprint({ title: __('Submit Error'), message: __('فشل تقديم قيد الدفع: ') + err2 });
+                                return reject(err2);
                             }
+
+                            // On success: set payment_entry back on child cheque row (try both child doctypes)
+                            const child_doctype = isPay ? "Cheque Table Pay" : "Cheque Table Receive";
+                            const child_name = docPayload.cheque_table_no || docPayload.cheque_table_no2;
+                            if (child_name) {
+                                frappe.db.set_value(child_doctype, child_name, "payment_entry", submitted.message.name)
+                                    .then(() => resolve(submitted.message))
+                                    .catch(e => {
+                                        console.error("Failed to set child payment_entry:", e);
+                                        // still resolve because the Payment Entry was created and submitted
+                                        resolve(submitted.message);
+                                    });
+                            } else {
+                                resolve(submitted.message);
+                            }
+                        },
+                        error: function(err) {
+                            console.error("Submit call error:", err);
+                            frappe.msgprint({ title: __('Submit RPC Error'), message: JSON.stringify(err) });
+                            reject(err);
                         }
                     });
+                },
+                error: function(err) {
+                    console.error("Insert call error:", err);
+                    frappe.msgprint({ title: __('Insert RPC Error'), message: JSON.stringify(err) });
+                    reject(err);
                 }
-            }
-        })
-    );
+            });
+        }));
+    });
 
-    Promise.all(funcs).then(() => {
+    chain.then(results => {
         frappe.msgprint("تم إنشاء الشيكات بنجاح ... برجاء مراجعة المدفوعات والمقبوضات.");
         frm.reload_doc();
     }).catch(err => {
-        // show an error if any
-        console.error(err);
-        frappe.msgprint({ title: __('Error'), message: __('حدث خطأ أثناء إنشاء أو تقديم قيود الدفع. راجع السجل.') });
+        // Final catch: log and inform
+        console.error("One or more Payment Entries failed:", err);
+        frappe.msgprint({ title: __('Error'), message: __('حدث خطأ أثناء إنشاء أو تقديم قيود الدفع. راجع السجل أو سجل المتصفح للحصول على مزيد من التفاصيل.') });
     });
 });
 
