@@ -1,282 +1,146 @@
 // Copyright (c) 2021, erpcloud.systems and contributors
 // For license information, please see license.txt
 
-// فلترة الحساب البنكي
 frappe.ui.form.on("Multiple Cheque Entry", {
     setup: function(frm) {
-        frm.set_query("bank_acc", function() {
-            return {
-                filters: [
-                    ["Bank Account","bank", "in", frm.doc.cheque_bank]
-                ]
-            };
-        });
+        frm.set_query("bank_acc", () => ({
+            filters: [["Bank Account", "bank", "in", frm.doc.cheque_bank]]
+        }));
+        frm.set_query("cheque_bank", () => ({
+            filters: [["Bank", "company_bank", "=", '1']]
+        }));
+        frm.set_query("mode_of_payment", () => ({
+            filters: [["Mode of Payment", "type", "=", 'Cheque']]
+        }));
+        frm.set_query("party_type", () => ({
+            filters: [["DocType", "name", "in", ["Customer", "Supplier"]]]
+        }));
     }
 });
 
-// فلترة البنوك الرئيسية
 frappe.ui.form.on("Multiple Cheque Entry", {
-    setup: function(frm) {
-        frm.set_query("cheque_bank", function() {
-            return {
-                filters: [
-                    ["Bank","company_bank", "=", '1']
-                ]
-            };
-        });
-    }
-});
-
-// فلترة طرق الدفع على مستوى السطر (لكل جدول شيكات)
-frappe.ui.form.on("Multiple Cheque Entry", {
-    setup: function(frm) {
-        ["cheque_table", "cheque_table_2"].forEach(table => {
-            frm.fields_dict[table].grid.get_field("mode_of_payment").get_query = function() {
-                return {
-                    filters: [
-                        ["Mode of Payment","type", "=", 'Cheque']
-                    ]
-                };
-            };
-            frm.fields_dict[table].grid.get_field("party_type").get_query = function() {
-                return {
-                    filters: [
-                        ["DocType","name", "in", ["Customer","Supplier"]]
-                    ]
-                };
-            };
-        });
-    }
-});
-
-// عند تغيير party_type
-frappe.ui.form.on("Multiple Cheque Entry","party_type", function(frm){
-    cur_frm.set_value("party","");
-    cur_frm.set_value("party_name","");
-});
-
-// عند تغيير البنك
-frappe.ui.form.on("Multiple Cheque Entry","cheque_bank", function(frm){
-    cur_frm.set_value("bank_acc","");
-    cur_frm.set_value("account","");
-    cur_frm.set_value("collection_fee_account","");
-    cur_frm.set_value("payable_account","");
-});
-
-// عند تغيير الحساب البنكي
-frappe.ui.form.on("Multiple Cheque Entry","bank_acc", function(frm){
-    cur_frm.set_value("account","");
-    cur_frm.set_value("collection_fee_account","");
-    cur_frm.set_value("payable_account","");
-});
-
-// تحديد party_type تلقائيًا حسب نوع الدفع
-frappe.ui.form.on('Multiple Cheque Entry', 'payment_type',  function(frm) {
-    if (cur_frm.doc.payment_type == "Receive"){
-        cur_frm.set_value("party_type", "Customer");
-    }
-    if (cur_frm.doc.payment_type == "Pay"){
-        cur_frm.set_value("party_type", "Supplier");
-    }
-});
-
-// جلب party_name تلقائيًا
-frappe.ui.form.on('Multiple Cheque Entry', 'party',  function(frm) {
-    if (cur_frm.doc.party_type =="Customer"){
+    party_type: function(frm) {
+        frm.set_value("party", "");
+        frm.set_value("party_name", "");
+    },
+    cheque_bank: function(frm) {
+        frm.set_value("bank_acc", "");
+        frm.set_value("account", "");
+        frm.set_value("collection_fee_account", "");
+        frm.set_value("payable_account", "");
+    },
+    bank_acc: function(frm) {
+        frm.set_value("account", "");
+        frm.set_value("collection_fee_account", "");
+        frm.set_value("payable_account", "");
+    },
+    payment_type: function(frm) {
+        if (frm.doc.payment_type === "Receive") {
+            frm.set_value("party_type", "Customer");
+        }
+        if (frm.doc.payment_type === "Pay") {
+            frm.set_value("party_type", "Supplier");
+        }
+    },
+    party: function(frm) {
+        if (!frm.doc.party_type || !frm.doc.party) return;
+        const doctype = frm.doc.party_type === "Customer" ? "Customer" : "Supplier";
+        const fieldname = frm.doc.party_type === "Customer" ? "customer_name" : "supplier_name";
         frappe.call({
             method: "frappe.client.get_value",
-            args: { doctype: "Customer", fieldname: "customer_name", filters: { 'name': cur_frm.doc.party}},
-            callback: function(r){cur_frm.set_value("party_name", r.message.customer_name);}
-        });
-    }
-    if (cur_frm.doc.party_type =="Supplier"){
-        frappe.call({
-            method: "frappe.client.get_value",
-            args: { doctype: "Supplier", fieldname: "supplier_name", filters: { 'name': cur_frm.doc.party}},
-            callback: function(r){cur_frm.set_value("party_name", r.message.supplier_name);}
-        });
-    }
-});
-
-// التحقق قبل الحفظ
-frappe.ui.form.on("Multiple Cheque Entry", "validate", function(frm) {
-    if(frm.doc.mode_of_payment_type != "Cheque"){
-        frappe.throw("نوع طريقة الدفع المختارة ليس شيك ... برجاء اختيار طريقة دفع من نوع شيك.");
-    }
-});
-
-// عند التقديم - الدفع
-frappe.ui.form.on("Multiple Cheque Entry", "on_submit", function(frm) {
-    if(frm.doc.payment_type == "Pay"){
-        let docs = [];
-        $.each(frm.doc.cheque_table_2 || [], function(i, w) {
-            if(!w.payment_entry){
-                docs.push({
-                    doctype: "Payment Entry",
-                    posting_date: frm.doc.posting_date,
-                    reference_doctype: "Multiple Cheque Entry",
-                    reference_link: frm.doc.name,
-                    payment_type: frm.doc.payment_type,
-                    mode_of_payment: w.mode_of_payment,
-                    mode_of_payment_type: w.mode_of_payment_type,
-                    party_type: w.party_type,
-                    party: w.party,
-                    paid_from: frm.doc.payable_account,
-                    paid_to: frm.doc.paid_to,
-                    cheque_bank: frm.doc.cheque_bank,
-                    bank_acc: frm.doc.bank_acc,
-                    cheque_type: w.cheque_type,
-                    reference_no: w.reference_no,
-                    reference_date: w.reference_date,
-                    paid_amount: w.paid_amount,
-                    received_amount: w.paid_amount,
-                    first_beneficiary: w.first_beneficiary,
-                    person_name: w.person_name,
-                    issuer_name: w.issuer_name,
-                    cheque_table_no2: w.name,
-                    picture_of_check: w.picture_of_check
-                });
-                frappe.call({
-                    method: "frappe.client.get_value",
-                    args: { doctype: "Payment Entry", fieldname: "name", filters: { 'cheque_table_no2': w.name}},
-                    callback: function(r){
-                        frappe.db.set_value("Cheque Table Pay",  w.name, "payment_entry", r.message.name);
-                    }
-                });
+            args: { doctype, fieldname, filters: { name: frm.doc.party } },
+            callback: function(r) {
+                frm.set_value("party_name", r.message ? r.message[fieldname] : "");
             }
         });
-        const funcs = docs.map(doc => {
-            return frappe.call({
-                method: "frappe.client.insert",
-                args: { doc: doc },
-                callback: function(r) {
-                    frappe.call({
-                        method: "frappe.client.submit",
-                        args: { doc: r.message }
-                    });
-                }
-            });
-        });
-        Promise.all(funcs).then(() => {
-            msgprint("تم إنشاء الشيكات بنجاح ... برجاء الدخول على المدفوعات والمقبوضات");
-            frm.refresh();
-        });
-    }
-});
-
-// عند التقديم - التحصيل والدفع
-frappe.ui.form.on("Multiple Cheque Entry", "on_submit", function(frm) {
-    if (frm.doc.payment_type == "Receive" || frm.doc.payment_type == "Pay") {
-        let docs = [];
-
-        $.each(frm.doc.cheque_table || [], function(i, v) {
-            if (!v.payment_entry) {
-                let paid_from_account = frm.doc.paid_from;
-                let paid_to_account = frm.doc.paid_to;
-
-                // Fetch correct accounts based on Payment Type
-                if (v.mode_of_payment) {
-                    frappe.call({
-                        method: "frappe.client.get_value",
-                        args: {
-                            doctype: "Mode of Payment Account",
-                            filters: {
-                                parent: v.mode_of_payment,
-                                company: frm.doc.company
-                            },
-                            fieldname: "default_account"
-                        },
-                        async: false,
-                        callback: function(r) {
-                            if (r.message && r.message.default_account) {
-                                if (frm.doc.payment_type === "Receive") {
-                                    paid_to_account = r.message.default_account;
-                                } else if (frm.doc.payment_type === "Pay") {
-                                    paid_from_account = r.message.default_account;
-                                }
-                            }
-                        }
-                    });
-                }
-
-                // Push document to be created
-                docs.push({
-                    doctype: "Payment Entry",
-                    posting_date: frm.doc.posting_date,
-                    reference_doctype: "Multiple Cheque Entry",
-                    reference_link: frm.doc.name,
-                    payment_type: frm.doc.payment_type,
-                    mode_of_payment: v.mode_of_payment,
-                    mode_of_payment_type: v.mode_of_payment_type,
-                    party_type: v.party_type,
-                    party: v.party,
-                    paid_from: paid_from_account,
-                    paid_to: paid_to_account,
-                    drawn_bank: v.bank,
-                    cheque_type: v.cheque_type,
-                    person_name: v.person_name,
-                    reference_no: v.reference_no,
-                    reference_date: v.reference_date,
-                    paid_amount: v.paid_amount,
-                    received_amount: v.paid_amount,
-                    cheque_table_no: v.name,
-                    first_beneficiary: v.first_beneficiary,
-                    picture_of_check: v.picture_of_check,
-                    issuer_name: v.issuer_name
-                });
-            }
-        });
-
-        // Create all Payment Entries
-        if (docs.length > 0) {
-            docs.forEach(function(doc) {
-                frappe.call({
-                    method: "frappe.client.insert",
-                    args: { doc: doc },
-                    callback: function(r) {
-                        if (r.message) {
-                            // Update the child table with the created payment entry
-                            frappe.db.set_value("Cheque Table Receive", doc.cheque_table_no, "payment_entry", r.message.name);
-                        }
-                    }
-                });
-            });
+    },
+    validate: function(frm) {
+        if (frm.doc.mode_of_payment_type !== "Cheque") {
+            frappe.throw("The selected Mode of Payment is not Cheque. Please select a Cheque type.");
         }
     }
 });
 
-        const funcs = docs.map(doc => {
-            return frappe.call({
-                method: "frappe.client.insert",
-                args: { doc: doc },
-                callback: function(r) {
+// -------- On Submit for Payment Entries --------
+frappe.ui.form.on("Multiple Cheque Entry", "on_submit", function(frm) {
+    const isPay = frm.doc.payment_type === "Pay";
+    const isReceive = frm.doc.payment_type === "Receive";
+    const table = isPay ? frm.doc.cheque_table_2 : frm.doc.cheque_table;
+    if (!table || !table.length) return;
+
+    let docs = [];
+    table.forEach(row => {
+        if (!row.payment_entry) {
+            docs.push({
+                doctype: "Payment Entry",
+                posting_date: frm.doc.posting_date,
+                reference_doctype: "Multiple Cheque Entry",
+                reference_link: frm.doc.name,
+                payment_type: frm.doc.payment_type,
+                mode_of_payment: frm.doc.mode_of_payment,
+                mode_of_payment_type: frm.doc.mode_of_payment_type,
+                party_type: frm.doc.party_type,
+                party: frm.doc.party,
+                paid_from: isReceive ? frm.doc.paid_from : frm.doc.payable_account,
+                paid_to: isReceive ? frm.doc.paid_to : frm.doc.paid_to,
+                cheque_bank: frm.doc.cheque_bank,
+                bank_acc: frm.doc.bank_acc,
+                cheque_type: row.cheque_type,
+                reference_no: row.reference_no,
+                reference_date: row.reference_date,
+                paid_amount: row.paid_amount,
+                received_amount: row.paid_amount,
+                first_beneficiary: row.first_beneficiary,
+                person_name: row.person_name,
+                issuer_name: row.issuer_name,
+                picture_of_check: row.picture_of_check,
+                cheque_table_no: isReceive ? row.name : undefined,
+                cheque_table_no2: isPay ? row.name : undefined
+            });
+        }
+    });
+
+    // Insert & Submit Each Entry Properly
+    const funcs = docs.map(doc =>
+        frappe.call({
+            method: "frappe.client.insert",
+            args: { doc },
+            callback: function(inserted) {
+                if (inserted.message) {
                     frappe.call({
                         method: "frappe.client.submit",
-                        args: { doc: r.message }
+                        args: { doc: inserted.message },
+                        callback: function(submitted) {
+                            if (submitted.message) {
+                                const child_doctype = isPay ? "Cheque Table Pay" : "Cheque Table Receive";
+                                frappe.db.set_value(child_doctype, doc.cheque_table_no || doc.cheque_table_no2, "payment_entry", submitted.message.name);
+                            }
+                        }
                     });
                 }
-            });
-        });
-        Promise.all(funcs).then(() => {
-            msgprint("تم إنشاء الشيكات بنجاح ... برجاء الدخول على المدفوعات والمقبوضات");
-            frm.refresh();
-        });
-    }
+            }
+        })
+    );
+
+    Promise.all(funcs).then(() => {
+        frappe.msgprint("تم إنشاء الشيكات بنجاح ... برجاء مراجعة المدفوعات والمقبوضات.");
+        frm.reload_doc();
+    });
 });
 
-// تحديث الحقول عند تغيير المستفيد الأول
-frappe.ui.form.on("Cheque Table Pay","first_beneficiary", function(){
-    for (var i = 0; i < cur_frm.doc.cheque_table_2.length; i++){
-        cur_frm.doc.cheque_table_2[i].person_name = cur_frm.doc.party_name;
-        cur_frm.doc.cheque_table_2[i].issuer_name = cur_frm.doc.company;
-    }
-    cur_frm.refresh_field('cheque_table_2');
+// -------- First Beneficiary Auto-Fill --------
+frappe.ui.form.on("Cheque Table Pay", "first_beneficiary", function(frm) {
+    frm.doc.cheque_table_2?.forEach(r => {
+        r.person_name = frm.doc.party_name;
+        r.issuer_name = frm.doc.company;
+    });
+    frm.refresh_field("cheque_table_2");
 });
 
-frappe.ui.form.on("Cheque Table Receive","first_beneficiary", function(){
-    for (var i = 0; i < cur_frm.doc.cheque_table.length; i++){
-        cur_frm.doc.cheque_table[i].person_name = cur_frm.doc.company;
-        cur_frm.doc.cheque_table[i].issuer_name = cur_frm.doc.party_name;
-    }
-    cur_frm.refresh_field('cheque_table');
+frappe.ui.form.on("Cheque Table Receive", "first_beneficiary", function(frm) {
+    frm.doc.cheque_table?.forEach(r => {
+        r.person_name = frm.doc.company;
+        r.issuer_name = frm.doc.party_name;
+    });
+    frm.refresh_field("cheque_table");
 });
